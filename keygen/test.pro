@@ -37,7 +37,7 @@ RESOURCES +=
 
 LIBS += -L/Users/macbook2015/Downloads/libdogecoin-msvc-0.1.1-dev/.libs -ldogecoin
 
-INCLUDEPATH += ../include /Users/macbook2015/Desktop/brew/include/secp256k1 /Users/macbook2015/Desktop/brew/include /Users/macbook2015/Desktop/brew/lib /Users/macbook2015/Downloads/opencv-4.x/build
+INCLUDEPATH += /Users/macbook2015/Downloads/libdogecoin-msvc-0.1.1-dev/include /Users/macbook2015/Desktop/brew/include/secp256k1 /Users/macbook2015/Desktop/brew/include /Users/macbook2015/Desktop/brew/lib /Users/macbook2015/Downloads/opencv-4.x/build
 
 
 
