@@ -11,8 +11,6 @@
 #include <qdebug.h>
 #include <QLineEdit>
 
-#include "dogecoin/libdogecoin.h"
-
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
