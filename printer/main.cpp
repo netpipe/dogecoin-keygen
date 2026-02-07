@@ -13,6 +13,15 @@
 #include "QRCode/QrCodeGeneratorDemo.h"
 #include <QTextStream>
 #include <QGraphicsScene>
+#include <QDesktopServices>
+#include <QUrl>
+#include <QProcess>
+#include <QFont>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
+#include <qdebug.h>
+#include <QLineEdit>
 
 void QRCode(QString text2) {
 
@@ -75,6 +84,66 @@ QString randomSerial()
     return s;
 }
 
+QString privateKey ;
+QString publicKey;
+
+void GenerateKeys(QString test){
+    if (test == "Dogecoin"){
+        QProcess process;
+        process.start(QApplication::applicationDirPath() + "/test", QStringList() << "generatePrivPubKeypair");
+
+        if (!process.waitForFinished()) {
+         //   publicLabel->setText("Public Key:\nERROR");
+          //  privateLabel->setText("Private Key:\nERROR");
+            return;
+        }
+
+
+        QString output = process.readAllStandardOutput();
+
+        QJsonParseError err;
+        QJsonDocument doc = QJsonDocument::fromJson(output.toUtf8(), &err);
+
+        if (err.error != QJsonParseError::NoError || !doc.isObject()) {
+            qWarning() << "Invalid JSON:" << err.errorString();
+            return;
+        }
+
+        QJsonObject obj = doc.object();
+
+         privateKey = obj.value("private").toString().trimmed();
+         publicKey  = obj.value("public").toString().trimmed();
+
+    }else{
+        QProcess process;
+        process.start(QApplication::applicationDirPath() + "/php", QStringList() << "index.php");
+
+        if (!process.waitForFinished()) {
+           // publicLabel->setText("Public Key:\nERROR");
+           // privateLabel->setText("Private Key:\nERROR");
+            return;
+        }
+
+
+        QString output = process.readAllStandardOutput();
+
+        QJsonParseError err;
+        QJsonDocument doc = QJsonDocument::fromJson(output.toUtf8(), &err);
+
+        if (err.error != QJsonParseError::NoError || !doc.isObject()) {
+            qWarning() << "Invalid JSON:" << err.errorString();
+            return;
+        }
+
+        QJsonObject obj = doc.object();
+
+         privateKey = obj.value("private").toString().trimmed();
+         publicKey  = obj.value("public").toString().trimmed();
+    }
+
+}
+
+
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
@@ -97,6 +166,10 @@ int main(int argc, char *argv[])
 
     QPushButton *printBtn = new QPushButton("Print Sheet");
 
+    QComboBox *comboCoin = new QComboBox;
+    comboCoin->addItem("Dogecoin");
+    comboCoin->addItem("Bitcoin");
+
     layout->addWidget(loadFrontBtn);
     layout->addWidget(frontLabel);
     layout->addWidget(loadBackBtn);
@@ -104,6 +177,7 @@ int main(int argc, char *argv[])
     layout->addWidget(new QLabel("Layout:"));
     layout->addWidget(gridBox);
     layout->addSpacing(10);
+        layout->addWidget(comboCoin);
     layout->addWidget(printBtn);
 
     QImage frontImg, backImg;
@@ -149,6 +223,17 @@ int main(int argc, char *argv[])
 
 
 
+        // Generate Serials specifically for this batch
+        // We need (rows * cols) serials.
+        QVector<QString> pageSerials;
+        QVector<QString> pageSerials2;
+        int totalBills = rows * cols;
+        for(int i=0; i<totalBills; ++i) {
+            GenerateKeys( comboCoin->currentText() );
+             pageSerials.append(publicKey);
+             pageSerials2.append(privateKey);
+        }
+
         // ---------- FRONT ----------
         for (int y = 0; y < rows; ++y) {
             for (int x = 0; x < cols; ++x) {
@@ -157,17 +242,36 @@ int main(int argc, char *argv[])
                 QSize imgSize = frontImg.size();
                 imgSize.scale(cell.size(), Qt::KeepAspectRatio);
 
-                QRect imgRect(
-                    cell.center() - QPoint(imgSize.width()/2, imgSize.height()/2),
-                    imgSize
-                );
+                // Derived from Python Mockup (300 DPI @ 130.75mm x 58.13mm)
+                // Canvas: 1544x686
+                // QR X: 0.8316 * width
+                // QR Y: 0.3105 * height
+                // QR Size: 0.3790 * height
+                // Text Y: 0.1200 * height (Top aligned)
+                // Text X: Centered horizontally
 
-                QRect imgRect2(
-                    cell.center() - QPoint(imgSize.width()/3, imgSize.height()/2),
-                    imgSize
-                );
+                // --- QR CODE PLACEMENT ---
+                int qrH = cell.height() * 0.38; // relative height
+                int qrW = qrH; // Square
+                int qrX = cell.x() + (cell.width() * 0.82); // Right alignedish
+                int qrY = cell.y() + (cell.height() * 0.31); // Vertically centered roughly
 
-                QString serial = randomSerial();
+                QRect imgRect(qrX, qrY, qrW, qrH);
+
+                // --- TEXT PLACEMENT ---
+                // Centered at the top, between the "20,000" corner marks (roughly).
+                int textH = cell.height() * 0.15;
+                int textW = cell.width(); // Full width to allow center alignment
+                int textX = cell.x(); // Start at left
+                int textY = cell.y() + (cell.height() * 0.12); // Top margin
+
+                QRect imgRect2(textX, textY, textW, textH);
+
+                // GET SERIAL FOR THIS CELL
+                int index = y * cols + x;
+                QString serial = pageSerials.value(index, "ERROR");
+
+                // Generate QR SVG for this serial (Note: Inefficient to re-gen if duplicate, but safer)
                 QRCode(serial);
                 QImage overlayImg;
                 overlayImg.load(QApplication::applicationDirPath() + "/tmp.svg");
@@ -176,14 +280,26 @@ int main(int argc, char *argv[])
 
 
                 painter.save();
-                painter.setOpacity(0.35);
+                painter.setOpacity(1.0); // Full opacity for QR to be scanneable
                 painter.drawImage(imgRect, overlayImg);
                 painter.restore();
 
-              //  painter.setPen(Qt::Black);
-                painter.drawText(imgRect2.adjusted(10,10,-10,-10),
-                                 Qt::AlignTop,
-                                 randomSerial());
+                // Draw Serial
+                QFont font = painter.font();
+                font.setPixelSize(cell.height() * 0.06); // Smaller font (was 0.08)
+                font.setBold(true); // Bold as requested
+                painter.setFont(font);
+
+                // Color match magenta/purple from ticket? Or standard black?
+                // Request said "cleaner". Black or Dark Gray is safest unless specified.
+                // Original code had "DN1..." in Magenta. Let's stick to a clean readable color.
+                painter.setPen(QColor(200, 0, 200)); // Magenta-ish to match "DN1..." style if needed, or just black.
+                                                     // Actually original code was commenting out setPen(Qt::Black).
+                                                     // Let's use a dark distinct color.
+
+                painter.drawText(imgRect2,
+                                 Qt::AlignCenter, // Center in its box
+                                 serial);
             }
         }
 
@@ -196,14 +312,82 @@ int main(int argc, char *argv[])
 
                 painter.drawImage(cell, backImg.scaled(cell.size(), Qt::KeepAspectRatio));
 
-                painter.setPen(Qt::red);
-                painter.drawText(cell.adjusted(10,10,-10,-10),
-                                 Qt::AlignBottom | Qt::AlignRight,
-                                 randomSerial());
+                // MIRROR LOGIC:
+                // Front(x, y) corresponds to Back(cols-1-x, y) physically when printed double-sided.
+                // We want the same serial number on the back of the physical bill.
+                int sourceCol = cols - 1 - x;
+                int index = y * cols + sourceCol;
+                QString serial = pageSerials2.value(index, "ERROR");
+
+                // --- MIRRORED QR PLACEMENT ---
+                // Front QR was at ~82% width.
+                // Back QR should be at ~18% width (mirrored).
+                // frontQrX_rel = 0.82
+                // backQrX_rel = 1.0 - 0.82 - qrWidth_rel(0.38 * h / w) ... roughly
+                // Let's use exact coordinate mirroring relative to cell.
+                // Front: int qrX = cell.x() + (cell.width() * 0.82);
+                // Back:  int qrX = cell.x() + (cell.width() - (cell.width() * 0.82) - qrW);
+
+                int qrH = cell.height() * 0.48;
+                int qrW = qrH;
+
+                // Keep same Y
+                int qrY = cell.y() + (cell.height() * 0.31);
+
+                // Mirror X
+                // Distance from Right Edge in Front = Distance from Left Edge in Back
+                int qrX_Back = cell.x() + (cell.width() - (cell.width() * 0.82) - qrW);
+                // Or simply: cell.x() + cell.width() * (1.0 - 0.82) - qrW ?
+                // Let's use the explicit logic:
+                // Front Offset R = cell.width() * 0.18 (approx, since 0.82 + w shouldn't overflow)
+                // Actually in Front logic: X = 0.82 * W.
+                // So Margin Right = W - (0.82*W + qrW).
+                // In Back, Margin Left = Margin Right of Front.
+                // X_Back = cell.x() + (cell.width() - (qrX_Front_Relative + qrW)) // No wait.
+                // If Front is at Right, Back is at Left.
+                // Let's use simple mirroring:
+                // X' = Width - X - ElementWidth
+                int frontRelX = cell.width() * 0.52;
+                int mirroredRelX = cell.width() - frontRelX - qrW;
+                int qrX = cell.x() + mirroredRelX;
+
+                QRect imgRect(qrX, qrY, qrW, qrH);
+
+                // --- TEXT PLACEMENT ---
+                // Text is Centered. Mirror of Center is Center.
+                int textH = cell.height() * 0.15;
+                int textW = cell.width();
+                int textX = cell.x();
+                int textY = cell.y() + (cell.height() * 0.12);
+
+                QRect imgRect2(textX, textY, textW, textH);
+
+                // Generate QR (Should be same as front, cache if needed but this is fast enough)
+                QRCode(serial);
+                QImage overlayImg;
+                overlayImg.load(QApplication::applicationDirPath() + "/tmp.svg");
+
+                painter.save();
+                painter.setOpacity(1.0);
+                painter.drawImage(imgRect, overlayImg);
+                painter.restore();
+
+                QFont font = painter.font();
+                font.setPixelSize(cell.height() * 0.06);
+                font.setBold(true);
+                painter.setFont(font);
+
+                // Same Color
+                painter.setPen(QColor(200, 0, 200));
+
+                painter.drawText(imgRect2,
+                                 Qt::AlignCenter,
+                                 serial);
             }
         }
 
         painter.end();
+        QDesktopServices::openUrl(QUrl::fromLocalFile(QApplication::applicationDirPath()+"/output.pdf"));
     });
 
     window.show();
